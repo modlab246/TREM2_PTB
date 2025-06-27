@@ -1,8 +1,12 @@
 # save_channel.ipynb 
+
+We want to construct composite images for each GeoMx spot 
+
 1. A read folder for metadata - "../data/"
 2. A read folder for channels - "../channel/"
 3. A write folder for crops - "../crops/"
 4. A write folder for composites - "../composites/"
+
 ## read in protein channels 
 PTB 21.1: DAPI, CD68, CD3, CD8
 
@@ -43,4 +47,30 @@ blue = green (yellow file) + yellow (blue file)
 * DAPI is mapping to green as the yellow file
 * CD68 is mapping to cyan as the blue file
 * CD3 is mapping to blue as the green file
-* CD8 is mapping to red as the red file 
+* CD8 is mapping to red as the red file
+
+# save_bb.ipynb 
+We want to find the bounding boxes for PTB 22.1/3, whereas PTB 21.1 and PTB 22.2 have moderately high quality ROIs already saved. PTB 22.1/3 have bounding box annotations with separate coordinates, hence we have to find a scale factor mapping the GeoMx spots to their new coordinates.
+
+$$
+annotated_{XY} = metadata_{XY} 	\cdot sf + constant
+$$
+
+## Find white pixels 
+PTB 22.1/2/3: [255, 255, 255, 255]
+
+PTB 21.1: [254/5, 254/5, 254/5, 255] 
+* A little less sensitive for this batch
+
+## Drawing the box 
+We find the white pixels within the GeoMx spot window, and take the point nearest to the center as the start. Note that PTB 21.1 and PTB 22.2 have numeric annotations already provided, but we want to write our own. 
+
+Add white points to a set such that they are all nearest neighbors and stop when the set stops increasing. 
+
+Construct the box as a scatter plot of the subset of white points, which are then smoothed over. 
+
+## Saving masks and images
+1. Save the mask for bounding box
+2. Save composite with mask
+3. Save the original annotation
+4. Save the subset of the composite within the mask 
