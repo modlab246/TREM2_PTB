@@ -81,4 +81,12 @@ Using the same intensities as save_channel.ipynb, we save full mosaic plots of t
 
 Because of the size of the channel files, individual matrices are deleted and memory is freed up. This was run on a computer with 64 GB of RAM. 
 
-## Text placement 
+## Fill in bound box
+Using contours to preserve outer shape
+
+## Place text and validate 
+Text should be adjacent to each ROI, and we run through several plots of the downsized matrix to make sure this happens. 
+
+## Saving downsized figure
+We take 1/16th of the full img ~100 MB
+
