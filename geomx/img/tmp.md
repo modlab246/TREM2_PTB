@@ -1,5 +1,8 @@
 # save_channel.ipynb 
-
+1. A read folder for metadata - "../data/"
+2. A read folder for channels - "../channel/"
+3. A write folder for crops - "../crops/"
+4. A write folder for composites - "../composites/"
 ## read in protein channels 
 PTB 21.1: DAPI, CD68, CD3, CD8
 
