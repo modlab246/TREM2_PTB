@@ -73,4 +73,12 @@ Construct the box as a scatter plot of the subset of white points, which are the
 1. Save the mask for bounding box
 2. Save composite with mask
 3. Save the original annotation
-4. Save the subset of the composite within the mask 
+4. Save the subset of the composite within the mask
+
+# load_211/221/222/223_mat.ipynb 
+
+Using the same intensities as save_channel.ipynb, we save full mosaic plots of the tissue sections with spots highlighted with and without labels. 
+
+Because of the size of the channel files, individual matrices are deleted and memory is freed up. This was run on a computer with 64 GB of RAM. 
+
+## Text placement 
