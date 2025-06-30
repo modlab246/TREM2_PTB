@@ -1,6 +1,6 @@
 # save_channel.ipynb 
 
-We want to construct composite images for each GeoMx spot 
+We want to construct composite images for each GeoMx spot. 
 
 1. A read folder for metadata - "../data/"
 2. A read folder for channels - "../channel/"
@@ -90,5 +90,5 @@ We take 1/16th of the full img ~100 MB
 
 # geomx_panel_plot.ipynb
 
-Plot GeoMx spots as composites with frames colored by annotation 
+Plot GeoMx spots as composites with frames colored by annotation.
 
