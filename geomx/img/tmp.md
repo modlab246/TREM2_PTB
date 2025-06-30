@@ -65,9 +65,7 @@ PTB 21.1: [254/5, 254/5, 254/5, 255]
 ## Drawing the box 
 We find the white pixels within the GeoMx spot window, and take the point nearest to the center as the start. Note that PTB 21.1 and PTB 22.2 have numeric annotations already provided, but we want to write our own. 
 
-Add white points to a set such that they are all nearest neighbors and stop when the set stops increasing. 
-
-Construct the box as a scatter plot of the subset of white points, which are then smoothed over. 
+Fill in either the outline or the inside of the box in special cases. 
 
 ## Saving masks and images
 1. Save the mask for bounding box
