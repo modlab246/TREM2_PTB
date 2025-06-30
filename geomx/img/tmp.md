@@ -88,3 +88,7 @@ Text should be adjacent to each ROI, and we run through several plots of the dow
 ## Saving downsized figure
 We take 1/16th of the full img ~100 MB
 
+# geomx_panel_plot.ipynb
+
+Plot GeoMx spots as composites with frames colored by annotation 
+
