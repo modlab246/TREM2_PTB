@@ -36,6 +36,6 @@ This directory contains all image related work on the raw tiff files getting the
 * Generates heatmaps of Jaccard scores across ACM ($${\color{red}2}$$)
 
 # Inputs and outputs saved in Zenodo 
-2. dge_files.zip: GeoMx_DCC_QC.R, GeoMx_DGE_plots.R, GeoMx_generate_summary.R
-3. pathway_plots.zip: pathway_plots_dend.ipynb
-4. overlap_files.zip: marker_overlap.ipynb
+1. **dge_files.zip**: GeoMx_DCC_QC.R, GeoMx_DGE_plots.R, GeoMx_generate_summary.R
+2. **pathway_plots.zip**: pathway_plots_dend.ipynb
+3. **overlap_files.zip**: marker_overlap.ipynb
