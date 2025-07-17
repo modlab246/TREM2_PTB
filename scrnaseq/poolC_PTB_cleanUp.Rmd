@@ -1,0 +1,688 @@
+---
+title: "scRNA_ptb_poolC_2"
+author: "Cenfu Wei"
+date: "2025-07-17"
+output: html_document
+---
+
+```{r}
+library(SeuratWrappers)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(clustree)
+library(cowplot)
+#library(MAST)
+library(VennDiagram)
+library(tidyverse)
+library(corrplot)
+library(ComplexHeatmap)
+library(UpSetR)
+library(ggplotify)
+#library(plyr)
+library(nichenetr)
+#library(RColorBrewer)
+library(ggridges)
+#library(ggsignif)
+#library(ggrepel)
+#library(scCustomize)
+#library(CellChat)
+#library(scCustomize)
+#library(fgsea)
+#library(future)
+#options(future.globals.maxSize = 2 * 1024^3)  # 2 GB
+
+# install.packages("remotes", repos="https://cloud.r-project.org/")
+# install.packages("sf", configure.args = c(sf = "--with-sqlite3-lib=/hpc/software/spack_v20d1/spack/opt/spack/linux-rhel7-x86_64/gcc-12.3.0/sqlite-3.40.1-gzayqyouerp6yxtxcd35gxeorakrlsg4/lib"))
+# remotes::install_github("cole-trapnell-lab/monocle3")
+
+library(SoupX)
+```
+
+```{r}
+#data_dir <- '/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_02242025/cellranger-9.0.1/RM4/outs/multi/count/raw_feature_bc_matrix/'
+#list.files(data_dir)# Should show barcodes.tsv, genes.tsv, and matrix.mtx
+seurat_211a <- Read10X(data.dir = '/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_02242025/cellranger-9.0.1/RM4/outs/per_sample_outs/PTB-21-1a/count/sample_filtered_feature_bc_matrix/')
+seurat_211b <- Read10X(data.dir = '/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_02242025/cellranger-9.0.1/RM4/outs/per_sample_outs/PTB-21-1b/count/sample_filtered_feature_bc_matrix/')
+seurat_222 <- Read10X(data.dir = '/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_02242025/cellranger-9.0.1/RM4/outs/per_sample_outs/PTB-22-2/count/sample_filtered_feature_bc_matrix/')
+seurat_223 <- Read10X(data.dir = '/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_02242025/cellranger-9.0.1/RM4/outs/per_sample_outs/PTB-22-3/count/sample_filtered_feature_bc_matrix/')
+
+seurat_211a = CreateSeuratObject(counts = seurat_211a)
+seurat_211b = CreateSeuratObject(counts = seurat_211b)
+seurat_222 = CreateSeuratObject(counts = seurat_222)
+seurat_223 = CreateSeuratObject(counts = seurat_223)
+```
+
+#SoupX Ambient RNA removal
+```{r}
+#need to process the data to obtain the cluster information for Ambient RNA removal using SoupX
+list_10x <- list(seurat_211a, seurat_211b, seurat_222, seurat_223)
+for(x in 1:length(list_10x)){
+  
+  Obj <- list_10x[[x]]
+  
+  #set.seed(NULL)
+  #downsampled_cells <- sample(colnames(Obj), size = 1500)#aprox 20-25 of the barcodes
+  #Obj <- Obj[,downsampled_cells]
+ 
+  Obj <- SCTransform( Obj,  return.only.var.genes=F)
+  Obj <- RunPCA(object =  Obj, npcs=30)
+  Obj <- RunUMAP(object =  Obj, dims = 1:30)
+  Obj <- FindNeighbors( Obj, reduction = "pca", dims = 1:30)#30 PCA here
+  DefaultAssay( Obj) <- "SCT"
+  Obj <- FindClusters( Obj, resolution =c(0.2))
+  list_10x[[x]] <- Obj
+}
+
+#add the clustering information to soupxchannel 
+
+for (i in 1:length(list_10x)){
+  meta    <- list_10x[[i]]@meta.data
+  umap    <- list_10x[[i]]@reductions$umap@cell.embeddings
+  sc  <- setClusters(sc, setNames(meta$seurat_clusters, rownames(meta)))
+  sc  <- setDR(sc, umap)
+  head(meta)
+
+  #caculate ambient RNA profile
+  sc  <- autoEstCont(sc)
+  #use the default setting to generate new count
+  out = adjustCounts(sc)
+
+  #plotChangeMap(sc, out, "JCHAIN")
+  #plotChangeMap(sc, out, "CD8A")
+
+  #create new objs
+  list_10x[[i]] <- CreateSeuratObject(out)
+}
+
+```
+
+#Do QC analysis
+```{r}
+Label <- c("seurat_211a", "seurat_211b", "seurat_222", "seurat_223")
+
+#process each sample individually to check data quality
+for(x in 1:length(list_10x)){
+  list_10x[[x]]$sample <- Label[x]
+  list_10x[[x]]$percent.mt <- PercentageFeatureSet(list_10x[[x]], pattern = "^MT-")
+  list_10x[[x]]$percent.rb <- PercentageFeatureSet(list_10x[[x]], pattern = "^RP[SL]")
+}
+
+#check quality per sample
+for(x in 1:length(list_10x)){
+  obj <- list_10x[[x]]
+  
+  p1 <- VlnPlot(obj, features = c("nFeature_RNA"), pt.size=0,group.by = "orig.ident") + geom_hline(yintercept = 400) + geom_text(aes(1,400,label = "400", vjust = -1))+theme(aspect.ratio = 1)
+  p2 <- VlnPlot(obj, features = c("nCount_RNA"), pt.size=0,group.by = "orig.ident") + geom_hline(yintercept = 450)+geom_text(aes(1,450,label = "450", vjust = -1))+theme(aspect.ratio = 1)
+  p3 <- VlnPlot(obj, features = c("percent.mt"), pt.size=0,group.by = "orig.ident") + geom_hline(yintercept = 20)+geom_text(aes(1,20,label = "20", vjust = -1))+theme(aspect.ratio = 1)
+  p4 <- VlnPlot(obj, features = c("percent.rb"), pt.size=0,group.by = "orig.ident") + geom_hline(yintercept = 5)+geom_text(aes(1,5,label = "5", vjust = -1))+theme(aspect.ratio = 1)
+  
+  plot1 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "percent.mt") +  geom_hline(yintercept = 20)+geom_text(aes(1,20,label = "20", vjust = -1))
+  plot2 <- FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") + geom_hline(yintercept = 100)+geom_text(aes(1,100,label = "100", vjust = -1))
+  
+  title <- ggdraw() + draw_label(unique(list_10x[[x]]$sample), fontface = "bold", size = 20, x = 0, hjust = 0)
+  temp <- plot_grid(p1,p2,p3,p4,plot1,plot2)
+  plot_final <- plot_grid(title,temp, ncol = 1, rel_heights = c(0.1,1))
+  ggsave(paste(unique(list_10x[[x]]$sample), "QCfeatures.pdf",sep = "_"), device = "pdf", path = "/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_02242025/analysis/",scale = 1, width = 30, height = 20, units = c("cm"), dpi = 200, limitsize = TRUE)
+}
+
+#---
+#check how many cells have > nfeature 400
+summary_data <- lapply(seq_along(list_10x), function(i) {
+  obj <- list_10x[[i]]
+  
+  # Add a column indicating the group (above or below 1000 nFeature_RNA)
+  obj_meta <- obj@meta.data %>%
+    mutate(Group = ifelse(nFeature_RNA > 1000, "More than 1000", "Less than 1000"))
+  
+  # Summarize counts for each group
+  summary <- obj_meta %>%
+    group_by(Group) %>%
+    summarise(Count = n()) %>%
+    mutate(Proportion = Count / sum(Count),
+             Sample = paste0("Sample ", unique(list_10x[[i]]$sample)))  # Add a sample label
+  
+  return(summary)
+}) %>% bind_rows()
+
+#---
+#check the UMAP of all the 4 samples
+#---
+for(x in 1:length(list_10x)){
+  
+  Obj <- list_10x[[x]]
+  
+  #set.seed(NULL)
+  #downsampled_cells <- sample(colnames(Obj), size = 1500)#aprox 20-25 of the barcodes
+  #Obj <- Obj[,downsampled_cells]
+ 
+  Obj <- SCTransform( Obj,  return.only.var.genes=F)
+  Obj <- RunPCA(object =  Obj, npcs=30)
+  Obj <- RunUMAP(object =  Obj, dims = 1:30)
+  Obj <- FindNeighbors( Obj, reduction = "pca", dims = 1:30)#30 PCA here
+  DefaultAssay( Obj) <- "SCT"
+  Obj <- FindClusters( Obj, resolution =c(0.2))
+  DefaultAssay( Obj) <- "RNA" #Question mark here
+  Obj <- NormalizeData( Obj)  #Question mark here
+  
+  
+  p1 <- DimPlot(Obj, label = TRUE, group.by = "SCT_snn_res.0.2") + ggtitle(paste(unique(list_10x[[x]]$sample), "resolution = 0.2")) + theme(aspect.ratio = 1)
+  p3 <- FeaturePlot(Obj, c("TREM2", #Mast cells CPA3 not detected in 
+                           "CD4",
+                           "CD8A",
+                           "CCL18",
+                           "nFeature_RNA",
+                           "nCount_RNA",
+                           "percent.mt"
+                           ), cols = c("grey", "red"))
+ 
+ 
+ 
+ title <- ggdraw() + draw_label(unique(list_10x[[x]]$sample), fontface = "bold", size = 20, x = 0, hjust = 0)
+  pa <- plot_grid(p1,p3,ncol=2)
+  plot_final <- plot_grid(title,pa, ncol = 1, rel_heights = c(0.1,1))
+  # pb <- plot_grid(pa,p3,ncol=2,rel_widths = c(1,1))
+  ggsave(paste(unique(list_10x[[x]]$sample), "AllBarcodeSampling.pdf",sep = "_"), device = "pdf", path = "/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_02242025/analysis/",width = 50, height = 20, units = c("cm"), scale = 1, dpi = 300, limitsize = TRUE)
+ 
+ # list_10x[[x]] <- Obj
+}
+```
+
+#run Seurat Merge->harmony integrate workflow
+```{r}
+list_10x_merge <- merge(list_10x[[1]], y = c(list_10x[[2]], list_10x[[3]],list_10x[[4]]), add.cell.ids = c("seurat_211a", "seurat_211b", "seurat_222","seurat_223"), project = "poolC")
+
+#remove the cells with mt.percentage > 5 and nFeature < 400
+list_10x_merge <- subset(list_10x_merge, percent.mt < 5)
+# dim(list_10x_merge)
+# [1] 18129 36579
+
+list_10x_merge <- subset(list_10x_merge, nFeature_RNA >= 400)
+# dim(list_10x_merge)
+# [1] 18129 32703
+
+#run harmony workflow
+Idents(list_10x_merge) <- "sample"
+
+list_10x_merge <- NormalizeData(list_10x_merge)
+list_10x_merge <- FindVariableFeatures(list_10x_merge)
+list_10x_merge <- ScaleData(list_10x_merge)
+list_10x_merge <- RunPCA(list_10x_merge)
+
+list_10x_merge <- IntegrateLayers(object = list_10x_merge, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+list_10x_merge <- RunUMAP(list_10x_merge, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+
+#---
+#find clusters
+list_10x_merge <- FindNeighbors(list_10x_merge, dims = 1:30, reduction = "harmony")
+list_10x_merge <- FindClusters(list_10x_merge, resolution = c(0.2,0.3,0.4,0.5,0.6))
+list_10x_merge <- FindClusters(list_10x_merge, resolution = c(0.05, 0.1))
+
+#---
+DimPlot(list_10x_merge, reduction = "umap.harmony", group.by = "RNA_snn_res.0.3",split.by = "sample")+theme(aspect.ratio = 1)
+
+#---
+#run tree analysis 
+DefaultAssay(list_10x_merge)<-"RNA"
+p_tree <- clustree(list_10x_merge, prefix = "RNA_snn_res.",
+                   prop_filter = 0.05)
+
+p_tree
+
+#plot res = 0.1, 0.2, 0.3
+p1<- DimPlot(list_10x_merge, reduction = "umap.harmony", group.by = "RNA_snn_res.0.1")+theme(aspect.ratio = 1)
+p2<- DimPlot(list_10x_merge, reduction = "umap.harmony", group.by = "RNA_snn_res.0.2")+theme(aspect.ratio = 1)
+p3<- DimPlot(list_10x_merge, reduction = "umap.harmony", group.by = "RNA_snn_res.0.3")+theme(aspect.ratio = 1)
+```
+
+#merge will poolB processed ptb sample
+```{r}
+oad("/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_poolB/poolB_seurat.RData")
+poolC <- list_10x_merge #adding this when running the workflow without loading the rds, note this the data with ambient RNA removed
+
+unique(sample$experiment)
+Idents(sample) <- "experiment"
+poolB_ptb221 <- subset(sample, idents = "PTB-22-1")
+
+#check the two gene symbol names of poolB and poolC to make sure they are consistent
+#project the label the 221
+#first to identify the common features of the two dataset
+common_features <- intersect(rownames(poolB_ptb221), rownames(poolC))#17646 common genes, poolB 18030 poolC 18129
+
+#subset the two datasets
+poolB_ptb221_comGene <- subset(poolB_ptb221, features = common_features)
+poolC_comGene <- subset(poolC, features = common_features)
+
+poolB_ptb221_comGene$sample <- "poolB_ptb221"
+#merge the ptb221 with poolC
+list_10x_merge <- merge(poolB_ptb221_comGene, poolC_comGene, add.cell.ids = c("poolB", "poolC"), project = "poolB_C")
+```
+
+#re-process the merged dataset and run harmony workflow
+```{r}
+#remove the cells with mt.percentage > 5 and nFeature < 400
+list_10x_merge <- subset(list_10x_merge, percent.mt < 5)
+# dim(list_10x_merge)
+# 17646 53575
+
+list_10x_merge <- subset(list_10x_merge, nFeature_RNA >= 400)
+# dim(list_10x_merge)
+# [1] 18129 32703
+
+Idents(list_10x_merge) <- "sample"
+
+list_10x_merge <- NormalizeData(list_10x_merge)
+list_10x_merge <- FindVariableFeatures(list_10x_merge)
+list_10x_merge <- ScaleData(list_10x_merge)
+list_10x_merge <- RunPCA(list_10x_merge)
+
+list_10x_merge <- IntegrateLayers(object = list_10x_merge, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+list_10x_merge <- RunUMAP(list_10x_merge, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+
+#---
+#find clusters
+list_10x_merge <- FindNeighbors(list_10x_merge, dims = 1:30, reduction = "harmony")
+list_10x_merge <- FindClusters(list_10x_merge, resolution = c(0.2,0.3,0.4,0.5,0.6))
+list_10x_merge <- FindClusters(list_10x_merge, resolution = c(0.05, 0.1))
+
+#---
+DimPlot(list_10x_merge, reduction = "umap.harmony", group.by = "RNA_snn_res.0.3",split.by = "sample")+theme(aspect.ratio = 1)
+FeaturePlot(list_10x_merge, reduction = "umap.harmony", features = c("JCHAIN", "TREM2","CD8A"))
+
+#---
+#run tree analysis 
+DefaultAssay(list_10x_merge)<-"RNA"
+p_tree <- clustree(list_10x_merge, prefix = "RNA_snn_res.",
+                   prop_filter = 0.05)
+
+p_tree
+
+```
+
+#use res = 0.1 for downstream cell typing
+```{r}
+Idents(list_10x_merge) <- "RNA_snn_res.0.1"
+list_10x_merge <- JoinLayers(list_10x_merge)
+a <- FindAllMarkers(list_10x_merge)
+
+list_10x_merge$cell_type_quick <- case_when(list_10x_merge$RNA_snn_res.0.1 == 0 ~ "macrophages",
+                                            list_10x_merge$RNA_snn_res.0.1 == 1 ~ "Alveolar Type 2 (AT2) Pneumocytes",
+                                            list_10x_merge$RNA_snn_res.0.1 == 2 ~ "T cells",
+                                            list_10x_merge$RNA_snn_res.0.1 == 3 ~ "Fibroblast and Myofibroblast",
+                                            list_10x_merge$RNA_snn_res.0.1 == 4 ~ "plasma cells",
+                                            list_10x_merge$RNA_snn_res.0.1 == 5 ~ "Endothelial Cells",
+                                            list_10x_merge$RNA_snn_res.0.1 == 6 ~ "B cells",
+                                            list_10x_merge$RNA_snn_res.0.1 == 7 ~ "Dendritic Cell",
+                                            list_10x_merge$RNA_snn_res.0.1 == 8 ~ "Secretory Club Cells / Bronchial Epithelial Cells",
+                                            list_10x_merge$RNA_snn_res.0.1 == 9 ~ "Mast cells",
+                                            list_10x_merge$RNA_snn_res.0.1 == 10 ~ "Lymphatic Endothelial cells",
+                                            list_10x_merge$RNA_snn_res.0.1 == 11 ~ "Plasmacytoid dendritic cells",)
+```
+
+#subset macrophages for macrophages cell typing
+```{r}
+# Idents(list_10x_merge) <- "cell_type_quick"
+# list_10x_merge_macro <- subset(list_10x_merge, idents = "macrophages")
+
+#Below is for ambient RNA removal
+FeaturePlot(list_10x_merge, features = "CD68")#confirming cluster 0 is macrophage
+Idents(list_10x_merge) <- "RNA_snn_res.0.1"
+list_10x_merge_macro <- subset(list_10x_merge, idents = 0)
+
+#re-integrate and run the workflow
+list_10x_merge_macro[["RNA"]] <- split(list_10x_merge_macro[["RNA"]], f = list_10x_merge_macro$sample)
+
+
+list_10x_merge_macro <- NormalizeData(list_10x_merge_macro)
+list_10x_merge_macro <- FindVariableFeatures(list_10x_merge_macro)
+list_10x_merge_macro <- ScaleData(list_10x_merge_macro)
+list_10x_merge_macro <- RunPCA(list_10x_merge_macro)
+
+
+list_10x_merge_macro <- IntegrateLayers(object = list_10x_merge_macro, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+list_10x_merge_macro <- RunUMAP(list_10x_merge_macro, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+
+#---
+#find clusters
+list_10x_merge_macro <- FindNeighbors(list_10x_merge_macro, dims = 1:30, reduction = "harmony")
+list_10x_merge_macro <- FindClusters(list_10x_merge_macro, resolution = c(0.2,0.3,0.4,0.5,0.6))
+list_10x_merge_macro <- FindClusters(list_10x_merge_macro, resolution = c(0.05, 0.1))
+
+#do tree analysis
+DefaultAssay(list_10x_merge_macro)<-"RNA"
+p_tree <- clustree(list_10x_merge_macro, prefix = "RNA_snn_res.",
+                   prop_filter = 0.05)
+
+p_tree
+
+#check umap between 0.2 and 0.3
+p1 <- DimPlot(list_10x_merge_macro, group.by = "RNA_snn_res.0.2", label = T, label.box = T)+theme(aspect.ratio = 1)
+p2 <- DimPlot(list_10x_merge_macro, group.by = "RNA_snn_res.0.3", label = T, label.box = T)+theme(aspect.ratio = 1)
+p1+p2
+
+#use res = 0.3 to annotate macropage subsets
+Idents(list_10x_merge_macro) <- "RNA_snn_res.0.3" 
+list_10x_merge_macro <- JoinLayers(list_10x_merge_macro)
+a<- FindAllMarkers(list_10x_merge_macro)
+
+list_10x_merge_macro$cell_type_quick_macro <- case_when(list_10x_merge_macro$RNA_snn_res.0.3 == 0 ~ "M0:interferon-stimulated macrophages",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 1 ~ "M1:SPP1+ Macrophages",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 2 ~ "M2:TREM2+ CCL18+ macrophages",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 3 ~ "M3:FABP4+ Lipid-Associated Macrophages",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 4 ~ "M4:TcellMarkers",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 5 ~ "M5:Fibroblast-like Macrophages",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 6 ~ "M6:Dendritic Cells",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 7 ~ "M7:AT2",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 8 ~ "M8:CCR7⁺ DCs",
+                                                        list_10x_merge_macro$RNA_snn_res.0.3 == 9 ~ "M9:Pro-inflammatory Monocytes (PMNs/IMs)",)
+```
+
+#do T cell susbset and annotation
+```{r}
+Idents(list_10x_merge)<-"RNA_snn_res.0.1"
+#FeaturePlot(list_10x_merge, features = c("CD8A", "CD2"))
+list_10x_merge_T <- subset(list_10x_merge, idents = 2)
+#Idents(list_10x_merge) <- "cell_type_quick"
+#list_10x_merge_T <- subset(list_10x_merge, idents = "T cells")
+
+#re-integrate and run the workflow
+list_10x_merge_T[["RNA"]] <- split(list_10x_merge_T[["RNA"]], f = list_10x_merge_T$sample)
+
+
+list_10x_merge_T <- NormalizeData(list_10x_merge_T)
+list_10x_merge_T <- FindVariableFeatures(list_10x_merge_T)
+list_10x_merge_T <- ScaleData(list_10x_merge_T)
+list_10x_merge_T <- RunPCA(list_10x_merge_T)
+
+
+list_10x_merge_T <- IntegrateLayers(object = list_10x_merge_T, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+list_10x_merge_T <- RunUMAP(list_10x_merge_T, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+
+#---
+#find clusters
+list_10x_merge_T <- FindNeighbors(list_10x_merge_T, dims = 1:30, reduction = "harmony")
+list_10x_merge_T <- FindClusters(list_10x_merge_T, resolution = c(0.2,0.3,0.4,0.5,0.6))
+list_10x_merge_T <- FindClusters(list_10x_merge_T, resolution = c(0.05, 0.1))
+
+#do tree analysis
+DefaultAssay(list_10x_merge_T)<-"RNA"
+p_tree <- clustree(list_10x_merge_T, prefix = "RNA_snn_res.",
+                   prop_filter = 0.05)
+
+p_tree
+
+#---
+list_10x_merge_T$cell_type_quick_T <- case_when(list_10x_merge_T$RNA_snn_res.0.3 == 0 ~ "T0:Naive and Central Memory T Cells ",
+                                                list_10x_merge_T$RNA_snn_res.0.3 == 1 ~ "T1:Effector Cytotoxic CD8+ T Cells ",
+                                                list_10x_merge_T$RNA_snn_res.0.3 == 2 ~ "T2:macrophage markers",
+                                                list_10x_merge_T$RNA_snn_res.0.3 == 3 ~ "T3:CD4+ T cells ",
+                                                list_10x_merge_T$RNA_snn_res.0.3 == 4 ~ "T4:fibroblast",
+                                                list_10x_merge_T$RNA_snn_res.0.3 == 5 ~ "T5:NK",
+                                                list_10x_merge_T$RNA_snn_res.0.3 == 6 ~ "T6:Tregs",
+                                                list_10x_merge_T$RNA_snn_res.0.3 == 7 ~ "T7:Innate-Like T Cells (MAIT or γδ T Cells)")
+```
+
+#add macrophage and T cell annotations back to the main umap
+#add the identified cell types back to the umap
+```{r}
+#add macrophage cell type to whole umap
+list_10x_merge$cell_type_quick_macro <- list_10x_merge_macro$cell_type_quick_macro
+list_10x_merge$cell_type_quick_2 <- ifelse(is.na(list_10x_merge$cell_type_quick_macro), list_10x_merge$cell_type_quick, list_10x_merge$cell_type_quick_macro)
+
+#add T cell subtypes to whole umap
+list_10x_merge$cell_type_quick_T <- list_10x_merge_T$cell_type_quick_T
+list_10x_merge$cell_type_quick_3 <- ifelse(is.na(list_10x_merge$cell_type_quick_T), list_10x_merge$cell_type_quick_2, list_10x_merge$cell_type_quick_T)
+
+DimPlot(list_10x_merge, group.by = "cell_type_quick_3", label = T, label.box = T)+theme(aspect.ratio = 1)
+DimPlot(list_10x_merge, group.by = "cell_type_quick_macro")+theme(aspect.ratio = 1)
+DimPlot(list_10x_merge, group.by = "cell_type_quick_T")+theme(aspect.ratio = 1)
+
+Idents(list_10x_merge) <- "cell_type_quick_macro"
+DimPlot(list_10x_merge, group.by = "cell_type_quick_macro", cells = WhichCells(list_10x_merge, idents = c("M4:TcellMarkers")))+theme(aspect.ratio = 1)
+
+Idents(list_10x_merge) <- "cell_type_quick_T"
+DimPlot(list_10x_merge, group.by = "cell_type_quick_T", cells = WhichCells(list_10x_merge, idents = c("T2:macrophage markers")))+theme(aspect.ratio = 1)
+```
+
+#remove comtaminate cells and re-run the whole workflow
+```{r}
+#do a final UMAP to share with UCLA
+Idents(list_10x_merge)<- "cell_type_quick_3"
+list_10x_merge_sub <- subset(list_10x_merge, idents = c("T4:fibroblast","T2:macrophage markers","M7:AT2","M4:TcellMarkers"), invert = T)
+
+#---re-run the whole workflow
+list_10x_merge_sub[["RNA"]] <- split(list_10x_merge_sub[["RNA"]], f = list_10x_merge_sub$sample)
+
+
+list_10x_merge_sub <- NormalizeData(list_10x_merge_sub)
+list_10x_merge_sub <- FindVariableFeatures(list_10x_merge_sub)
+list_10x_merge_sub <- ScaleData(list_10x_merge_sub)
+list_10x_merge_sub <- RunPCA(list_10x_merge_sub)
+
+
+list_10x_merge_sub <- IntegrateLayers(object = list_10x_merge_sub, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+list_10x_merge_sub <- RunUMAP(list_10x_merge_sub, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+list_10x_merge_sub <- JoinLayers(list_10x_merge_sub)
+
+#---
+#find clusters
+list_10x_merge_sub <- FindNeighbors(list_10x_merge_sub, dims = 1:30, reduction = "harmony")
+list_10x_merge_sub <- FindClusters(list_10x_merge_sub, resolution = c(0.2,0.3,0.4,0.5,0.6))
+list_10x_merge_sub <- FindClusters(list_10x_merge_sub, resolution = c(0.05, 0.1))
+
+#do tree analysis
+DefaultAssay(list_10x_merge_sub)<-"RNA"
+p_tree <- clustree(list_10x_merge_sub, prefix = "RNA_snn_res.",prop_filter = 0.05)
+p_tree
+
+#obtain the top markers
+Idents(list_10x_merge_sub) <- "RNA_snn_res.0.2"
+a <- FindAllMarkers(list_10x_merge_sub)
+
+list_10x_merge_sub$cell_type_subset <- case_when(list_10x_merge_sub$RNA_snn_res.0.2 == 0 ~ "macrophage",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 1 ~ "Alveolar Type 2 (AT2) Cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 2 ~ "Lung fibroblasts",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 3 ~ "T cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 4 ~ "plasma cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 5 ~ "Vascular endothelial cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 6 ~ "B cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 7 ~ "Club Cell and Airway Progenitor Markers",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 8 ~ "Epithelial Progenitor Cells (Basal?)",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 9 ~ "Mast Cell",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 10 ~ "Classical Dendritic Cell Type 1 (cDC1)",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 11 ~ "Oligodendrocyte precursor cells (OPCs)",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 12 ~ "Ciliated airway epithelial, Goblet, Club cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 13 ~ "Lymphatic Endothelial Cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 14 ~ "Plasmacytoid Dendritic Cell (pDC)")
+```
+
+#subset macrophage and T cells
+```{r}
+Idents(list_10x_merge_sub) <- "RNA_snn_res.0.2"
+list_10x_merge_sub_macro <- subset(list_10x_merge_sub, ident = 0)
+list_10x_merge_sub_T <- subset(list_10x_merge_sub, ident = 3)
+```
+
+#re-run macrophages
+```{r}
+list_10x_merge_sub_macro[["RNA"]] <- split(list_10x_merge_sub_macro[["RNA"]], f = list_10x_merge_sub_macro$sample)
+list_10x_merge_sub_macro <- NormalizeData(list_10x_merge_sub_macro)
+list_10x_merge_sub_macro <- FindVariableFeatures(list_10x_merge_sub_macro)
+list_10x_merge_sub_macro <- ScaleData(list_10x_merge_sub_macro)
+list_10x_merge_sub_macro <- RunPCA(list_10x_merge_sub_macro)
+
+list_10x_merge_sub_macro <- IntegrateLayers(object = list_10x_merge_sub_macro, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+list_10x_merge_sub_macro <- RunUMAP(list_10x_merge_sub_macro, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+#---
+#find clusters
+list_10x_merge_sub_macro <- FindNeighbors(list_10x_merge_sub_macro, dims = 1:30, reduction = "harmony")
+list_10x_merge_sub_macro <- FindClusters(list_10x_merge_sub_macro, resolution = c(0.2,0.3,0.4,0.5,0.6))
+list_10x_merge_sub_macro <- FindClusters(list_10x_merge_sub_macro, resolution = c(0.05, 0.1))
+
+#do tree analysis
+DefaultAssay(list_10x_merge_sub_macro)<-"RNA"
+p_tree <- clustree(list_10x_merge_sub_macro, prefix = "RNA_snn_res.",
+                   prop_filter = 0.05)
+
+p_tree
+
+#use res=0.3
+Idents(list_10x_merge_sub_macro) = "RNA_snn_res.0.3"
+a_03 <- FindAllMarkers(list_10x_merge_sub_macro)
+
+#annotaion of macrophages
+list_10x_merge_sub_macro$cell_type_subset_macro <- case_when(list_10x_merge_sub_macro$RNA_snn_res.0.5 == 0 ~ "M2",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 1 ~ "TREM2+CCL18+ Macro",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 2 ~ "SPP1+ Macro",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 3 ~ "FABP4+ lipid-associated macrophages",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 4 ~ "LYVE1 high Macro",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 5 ~ "IFN-γ-activated macrophages",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 6 ~ "Fibroblast-like Macrophages",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 7 ~ "Dendretic Cells",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 8 ~ "Fibro Contam",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 9 ~ "CCR7+ DCs",
+                                                             list_10x_merge_sub_macro$RNA_snn_res.0.5 == 10 ~ "Epithelial Contam")
+```
+
+#re-run T cell
+```{r}
+list_10x_merge_sub_T[["RNA"]] <- split(list_10x_merge_sub_T[["RNA"]], f = list_10x_merge_sub_T$sample)
+list_10x_merge_sub_T <- NormalizeData(list_10x_merge_sub_T)
+list_10x_merge_sub_T <- FindVariableFeatures(list_10x_merge_sub_T)
+list_10x_merge_sub_T <- ScaleData(list_10x_merge_sub_T)
+list_10x_merge_sub_T <- RunPCA(list_10x_merge_sub_T)
+
+list_10x_merge_sub_T <- IntegrateLayers(object = list_10x_merge_sub_T, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+list_10x_merge_sub_T <- RunUMAP(list_10x_merge_sub_T, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+#---
+#find clusters
+list_10x_merge_sub_T <- FindNeighbors(list_10x_merge_sub_T, dims = 1:30, reduction = "harmony")
+list_10x_merge_sub_T <- FindClusters(list_10x_merge_sub_T, resolution = c(0.2,0.3,0.4,0.5,0.6))
+list_10x_merge_sub_T <- FindClusters(list_10x_merge_sub_T, resolution = c(0.05, 0.1))
+
+#do tree analysis
+DefaultAssay(list_10x_merge_sub_T)<-"RNA"
+p_tree <- clustree(list_10x_merge_sub_T, prefix = "RNA_snn_res.",
+                   prop_filter = 0.05)
+
+p_tree
+
+#use res=0.2
+Idents(list_10x_merge_sub_T) = "RNA_snn_res.0.2"
+a <- FindAllMarkers(list_10x_merge_sub_T)
+
+#add cell types
+list_10x_merge_sub_T$cell_type_subset_T <- case_when(list_10x_merge_sub_T$RNA_snn_res.0.2 == 0 ~ "CD8+ T",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 1 ~ "Naive and Central Memory T",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 2 ~ "Th17",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 3 ~ "NK",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 4 ~ "Treg",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 5 ~ "Innate-Like T Cells (MAIT or γδ T Cells)")
+```
+
+#re-naming
+```{r}
+#assign the cell types to the obj
+list_10x_merge_sub$cell_type_subset_UCLA <- case_when(list_10x_merge_sub$RNA_snn_res.0.2 == 0 ~ "macrophage",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 1 ~ "AET2",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 2 ~ "lung FB",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 3 ~ "T cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 4 ~ "plasma cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 5 ~ "vascular EC",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 6 ~ "B cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 7 ~ "AET1",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 8 ~ "proliferating",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 9 ~ "Mast Cell",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 10 ~ "cDC1",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 11 ~ "neuron",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 12 ~ "bronchial epithelial cells",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 13 ~ "lymphatic EC",
+                                                 list_10x_merge_sub$RNA_snn_res.0.2 == 14 ~ "pDC")
+
+list_10x_merge_sub_macro_8rm$cell_type_subset_macro_UCLA <- case_when(list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 0 ~ "monocyte-derived cell",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 1 ~ "TREM2+ CCL18+ macro",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 2 ~ "SPP1+ macro",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 3 ~ "FABP4+ alveolar macro",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 4 ~ "LYVE1 high macro",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 5 ~ "IFN-activated macro",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 6 ~ "myoFB",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 7 ~ "CD1c DC vs LC",
+                                                             list_10x_merge_sub_macro_8rm$RNA_snn_res.0.5 == 9 ~ "CCR7+ LAMP3+ DCs")
+
+
+list_10x_merge_sub_T$cell_type_subset_T_UCLA <- case_when(list_10x_merge_sub_T$RNA_snn_res.0.2 == 0 ~ "CD8+ T",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 1 ~ "Naïve T",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 2 ~ "Th17",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 3 ~ "NK",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 4 ~ "Treg",
+                                                     list_10x_merge_sub_T$RNA_snn_res.0.2 == 5 ~ "mixed T(?)")
+#make the final annotation
+list_10x_merge_sub$cell_type_subset_macro_UCLA <- list_10x_merge_sub_macro_8rm$cell_type_subset_macro_UCLA
+list_10x_merge_sub$cell_type_subset_T_UCLA <- list_10x_merge_sub_T_5rm$cell_type_subset_T_UCLA
+
+list_10x_merge_sub$final_UCLA <- ifelse(is.na(list_10x_merge_sub$cell_type_subset_macro_UCLA), list_10x_merge_sub$cell_type_subset_UCLA, list_10x_merge_sub$cell_type_subset_macro_UCLA)
+
+list_10x_merge_sub$final_UCLA <- ifelse(is.na(list_10x_merge_sub$cell_type_subset_T_UCLA), list_10x_merge_sub$final_UCLA, list_10x_merge_sub$cell_type_subset_T_UCLA)
+
+#re-move contaminated cell groups
+Idents(list_10x_merge_sub) <- "final_UCLA"
+list_10x_merge_sub_final <- subset(list_10x_merge_sub, idents = c("T cells", "macrophage"), invert = T)
+```
+
+#re-name 2
+```{r}
+list_10x_merge_sub_final$final_UCLA_2 <- case_when(list_10x_merge_sub_final$final_UCLA == "AET2" ~ "AET2",
+                                                   list_10x_merge_sub_final$final_UCLA == "lung FB" ~ "FB",
+                                                   list_10x_merge_sub_final$final_UCLA == "plasma cells" ~ "plasma cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "vascular EC" ~ "vascular EC",
+                                                   list_10x_merge_sub_final$final_UCLA == "B cells" ~ "B cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "AET1" ~ "AET1",
+                                                   list_10x_merge_sub_final$final_UCLA == "proliferating" ~ "proliferating cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "Mast Cell" ~ "mast cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "cDC1" ~ "cDC1",
+                                                   list_10x_merge_sub_final$final_UCLA == "neuron" ~ "neurons",
+                                                   list_10x_merge_sub_final$final_UCLA == "bronchial epithelial cells" ~ "bronchial epithelial cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "lymphatic EC" ~ "lymphatic EC",
+                                                   list_10x_merge_sub_final$final_UCLA == "pDC" ~ "pDC",
+                                                   list_10x_merge_sub_final$final_UCLA == "CD8+ T" ~ "CD8+ T cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "Naïve T" ~ "naïve T cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "Th17" ~ "Th17 cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "NK" ~ "NK cells",
+                                                   list_10x_merge_sub_final$final_UCLA == "Treg" ~ "Tregs",
+                                                   list_10x_merge_sub_final$final_UCLA == "monocyte-derived cell" ~ "monocytes",
+                                                   list_10x_merge_sub_final$final_UCLA == "TREM2+ CCL18+ macro"  ~ "TREM2+ lipid associated macrophage",
+                                                   list_10x_merge_sub_final$final_UCLA == "SPP1+ macro" ~ "SPP1+ macrophage",
+                                                   list_10x_merge_sub_final$final_UCLA == "FABP4+ alveolar macro" ~ "alveolar macrophage",
+                                                   list_10x_merge_sub_final$final_UCLA == "LYVE1 high macro" ~ "interstitial macrophage",
+                                                   list_10x_merge_sub_final$final_UCLA == "IFN-activated macro" ~ "IFN-activated macrophage",
+                                                   list_10x_merge_sub_final$final_UCLA == "myoFB" ~ "myoFB",
+                                                   list_10x_merge_sub_final$final_UCLA == "CD1c DC vs LC" ~ "migratory LC",
+                                                   list_10x_merge_sub_final$final_UCLA == "CCR7+ LAMP3+ DCs" ~ "LAMP3+ DC"
+                                                   )
+
+list_10x_merge_sub_final$final_UCLA_3 <- ifelse(list_10x_merge_sub_final$final_UCLA_2 == "TREM2+ lipid associated macrophage",
+                                                "TREM2+ macrophage", list_10x_merge_sub_final$final_UCLA_2)
+list_10x_merge_sub_final$final_UCLA_4 <- gsub("macrophage", "MØ", list_10x_merge_sub_final$final_UCLA_3)
+```
+
