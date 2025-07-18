@@ -239,7 +239,7 @@ p2<- DimPlot(list_10x_merge, reduction = "umap.harmony", group.by = "RNA_snn_res
 p3<- DimPlot(list_10x_merge, reduction = "umap.harmony", group.by = "RNA_snn_res.0.3")+theme(aspect.ratio = 1)
 ```
 
-#merge will poolB processed ptb sample
+#merge poolB processed ptb sample
 ```{r}
 oad("/projects/b1042/DulaiLab/Cenfu/UCLA_PTB/scRNAseq_poolB/poolB_seurat.RData")
 poolC <- list_10x_merge #adding this when running the workflow without loading the rds, note this the data with ambient RNA removed
